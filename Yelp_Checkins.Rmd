@@ -1,0 +1,46 @@
+---
+title: "Yelp tips and checkins"
+output: word_document
+---
+
+```{r}
+suppressWarnings(library(readr))
+
+yelp_tip <- suppressWarnings(read_csv("~/Desktop/yelp_academic_dataset_tip.csv"))
+
+yelp_checkin <- suppressWarnings(read_csv("~/Desktop/yelp_academic_dataset_checkin.csv"))
+```
+
+```{r}
+library(stringr)
+library(data.table)
+
+checkin_str1 <- yelp_checkin$time
+
+checkin_str2 <- gsub("\\[|\\]", "", checkin_str1)
+
+checkin_str3 <- strsplit(checkin_str2, "[,]")
+
+get_checkins <- function(t){
+ split_1 <- gsub(".*:", "", x = checkin_str3[[t]])
+ split_2 <- gsub("'","", x = split_1)
+ split_3 <- sum(as.numeric(split_2)-1)
+}
+
+total_checkins <- sapply(1:length(checkin_str3), get_checkins)
+
+names(total_checkins) <- yelp_checkin$business_id
+
+final <- setDT(as.data.frame(total_checkins), keep.rownames = TRUE)[]
+
+write_csv(final, "Business_Checkins.csv")
+```
+
+
+```{r}
+
+```
+
+
+
+
