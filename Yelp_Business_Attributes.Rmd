@@ -1,0 +1,63 @@
+---
+title: "Yelp Business Test Analysis"
+output: word_document
+---
+
+```{r}
+library(readr)
+attrib <- read_csv("~/Downloads/business_attributes.csv")
+
+yelp_business <- suppressWarnings(read_csv("~/Desktop/yelp_academic_dataset_business_train.csv"))
+
+attributes <- cbind(business_id = yelp_business$business_id,stars = yelp_business$stars,attrib[,-1])
+
+unique(attributes$restaurantsattire)
+```
+
+```{r}
+library(MASS)
+na_count <-sapply(attributes, function(y) sum(length(which(is.na(y)))))
+#get rid of byob, byobcorkage, caters, noiselevel, wheelchairaccessible,restaurantscounterservice,dogsallowed,byappointmentonly, all the rest of the hshit after that
+attributes2 <- attributes[,c(1:12, 15:21, 23:30,32:37, 39, 41)]
+complete <- attributes2[complete.cases(attributes2),]
+# variable 4 only has one value
+#LDA_fit <- lda(stars~., data = complete[,-c(1,4)])
+
+#summary(LDA_fit)
+
+log_reg <- glm(stars~., data = complete[,-c(1,4)])
+summary(log_reg)
+plot(log_reg)
+
+final1 <- complete[,-4]
+attributes3 <- attributes2[,c(1,2,3,8,12:14,20:24,26,27,30)]
+
+complete2 <- attributes3[complete.cases(attributes3),]
+
+#final <- final1[,c(1,2,3,7,11:13,19:23,25,26,29)]
+
+#write.csv(complete2, file = "business_attributes_clean2.csv")
+```
+
+Predicting attributes for businesses with NAs
+Realized this actually won't work at all, disregard everything below this line...
+
+```{r}
+library(randomForest)
+#Build model using training data above
+
+factors <- matrix(unlist(sapply(complete2[,-c(1,2)], function(x) as.factor(x))), ncol = 13)
+factors2 <- cbind(complete2[,2], factors)
+colnames(factors2) <- c(names(complete2[,-1]))
+randomForest(stars~., data = factors2)
+```
+
+```{r}
+business_sparse <- attributes2[,c(1,2,3,8,12:14,20:24,26,27,30)]
+not_complete <- business_sparse[-complete.cases(attributes3),]
+```
+
+
+
+
+
