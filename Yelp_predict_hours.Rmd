@@ -1,0 +1,143 @@
+---
+title: "Yelp predict hours"
+output: word_document
+---
+
+```{r}
+library(readr)
+library(dplyr)
+
+hours <- read_csv("~/Downloads/business_hours.jpg")
+yelp_business <- suppressWarnings(read_csv("~/Desktop/yelp_academic_dataset_business_train.csv"))
+```
+
+```{r}
+get_categories <- function(t){
+  x <- filter(yelp_business, business_id == t)
+  return(x$categories)
+}
+matrix <- sapply(hours$business_id, get_categories)
+
+data <- cbind(hours,categories = matrix)
+data2 <- data[,c(3,4)]
+```
+
+clean data2 categories
+
+```{r}
+attrib1 <- gsub("\\[|\\]", "", data2[,2])
+
+attrib2 <- gsub("'", '', attrib1)
+
+attrib3 <- strsplit(attrib2, ",")
+attrib4 <- matrix(unlist(attrib3), ncol = 2, byrow = TRUE)
+
+trim.leading <- function (x)  sub("^\\s+", "", x)
+attrib5 <- trim.leading(attrib4[,2])
+
+final <- cbind(attrib4[,1], V2 = attrib5)
+
+final2 <- paste(final[,1],final[,2])
+final3 <- sub("\\s+Restaurants", "", final2)
+final4 <- sub("Restaurants\\s+", "", final3)
+final5 <- sub("\\s+Food", "", final4)
+final6 <- sub("Food\\s+", "", final5)
+
+wew <- as.matrix(cbind(data2[,1], final6))
+new <- as.numeric(wew[,1])
+finally <- cbind.data.frame(hours = new, categories = wew[,2])
+
+dummies <- as.matrix(model.matrix(~finally[,2]))
+contrasts(finally[,2])
+
+#unique(finally$categories)
+library(randomForest)
+
+set.seed(12)
+finally2 <- cbind(hours = finally[,1], dummies[,-1])
+colnames(finally2) <- c("hours", "coffee_tea", "mexican", "pizza")
+fit <- randomForest(hours~., data = finally2, mtry = 2, importance = TRUE)
+
+```
+
+
+```{r}
+missing <- yelp_business[is.na(yelp_business$hours),]
+missing2 <- missing[,c(3,4,8)]
+
+dur <- as.matrix(unlist(missing2[,3]))
+attrib1 <- gsub("\\[|\\]", "", dur)
+
+
+attrib2 <- gsub("'", '', attrib1)
+
+attrib3 <- strsplit(attrib2, ",")
+attrib4 <- matrix(unlist(attrib3), ncol = 2, byrow = TRUE)
+
+trim.leading <- function (x)  sub("^\\s+", "", x)
+attrib5 <- trim.leading(attrib4[,2])
+
+final <- cbind(attrib4[,1], V2 = attrib5)
+
+final2 <- paste(final[,1],final[,2])
+final3 <- sub("\\s+Restaurants", "", final2)
+final4 <- sub("Restaurants\\s+", "", final3)
+final5 <- sub("\\s+Food", "", final4)
+final6 <- sub("Food\\s+", "", final5)
+
+okay <- cbind(missing2[,c(1,2)], final6)
+
+dummies <- as.matrix(model.matrix(~okay[,3]))
+finally2 <- cbind.data.frame(hours = okay[,1], dummies[,-1])
+colnames(finally2) <- c("business_id", "coffee_tea", "mexican", "pizza")
+
+okay1 <- predict(fit, okay$final6)
+```
+
+```{r}
+test_business <- read_csv("~/Desktop/yelp_academic_dataset_business_test.csv", col_names = TRUE)
+```
+
+```{r}
+missing <- test_business[is.na(test_business$hours),]
+missing2 <- missing[,c(4,9)]
+
+dur <- as.matrix(unlist(missing2[,2]))
+attrib1 <- gsub("\\[|\\]", "", dur)
+
+
+attrib2 <- gsub("'", '', attrib1)
+
+attrib3 <- strsplit(attrib2, ",")
+attrib4 <- matrix(unlist(attrib3), ncol = 2, byrow = TRUE)
+
+trim.leading <- function (x)  sub("^\\s+", "", x)
+attrib5 <- trim.leading(attrib4[,2])
+
+final <- cbind(attrib4[,1], V2 = attrib5)
+
+final2 <- paste(final[,1],final[,2])
+final3 <- sub("\\s+Restaurants", "", final2)
+final4 <- sub("Restaurants\\s+", "", final3)
+final5 <- sub("\\s+Food", "", final4)
+final6 <- sub("Food\\s+", "", final5)
+
+okay <- cbind(missing2[,1], final6)
+
+dummies <- as.matrix(model.matrix(~okay[,2]))
+finally2 <- cbind.data.frame(hours = okay[,1], dummies[,-1])
+colnames(finally2) <- c("business_id", "coffee_tea", "mexican", "pizza")
+
+okay1 <- predict(fit, finally2[,-1])
+
+weew <- cbind.data.frame(business_id = finally2[,1], hours = okay1)
+
+write_csv(weew, "test_business_pred_hours.csv")
+
+```
+
+
+
+
+
+
