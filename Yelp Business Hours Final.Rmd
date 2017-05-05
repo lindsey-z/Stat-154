@@ -1,0 +1,177 @@
+---
+title: "Yelp Business Hours Final"
+author: "Lindsey Zhang"
+date: "4/30/2017"
+output: word_document
+---
+
+```{r}
+suppressWarnings(library(readr))
+
+yelp_business <- suppressWarnings(read_csv("~/Desktop/yelp_academic_dataset_business_train.csv"))
+```
+
+```{r}
+library(stringr)
+
+hours <- yelp_business$hours
+day_count <- str_count(hours, "day")
+
+combined <- cbind(yelp_business$business_id, hours, day_count)
+```
+
+```{r}
+hours2 <- gsub("\\[|\\]", "", hours)
+
+split <- strsplit(hours2, "[,]")
+
+get_time <- function(t){
+  split_1 <- gsub(".*day\\s(.*?)*", "", x = split[[t]] )
+
+  split_2 <- strsplit(split_1, "'")
+}
+
+split_3 <- sapply(1:length(split), get_time)
+
+get_business <- function(i){
+  matrix(unlist(split_3[[i]]), nrow = length(split_3[[i]]))
+}
+
+
+split_4 <- sapply(1:length(split_3), get_business)
+names(split_4) <- yelp_business$business_id
+
+wow <- lapply(split_4, function(x) x[!is.na(x)])
+wow2 <- wow[lapply(wow,length)>0]
+
+#split_5 <- matrix(wow2, ncol = length(wow2))
+split_5 <- wow[lapply(wow,length)>0]
+###
+get_days <- function(i){
+  length(split_5[[i]])
+}
+num_days <- sapply(1:length(split_5), get_days)
+
+###
+get_hours_one_business <- function(i){
+  clean <- strsplit(as.character(split_5[[i]]), "-")
+  
+  getpls <- function(k){
+    strsplit(as.character(clean[[k]]), ":")
+  }
+  
+  cleaned <- sapply(1:num_days[i], getpls)
+
+  mat <- matrix(as.numeric(unlist(cleaned)), ncol = 4, byrow = TRUE)
+  
+  mat2 <- cbind(abs(mat[,3] - mat[,1]), abs(mat[,4] - mat[,2])/60)
+  
+  mat3 <- mat2[,1] + mat2[,2]
+  mat4 <- sum(mat3)
+}
+
+finally <- as.data.frame(sapply(seq_along(split_5), get_hours_one_business))
+
+finally2 <- cbind(names(split_5), finally)
+#names(finally) <- names(split_5)
+
+colnames(finally2) <- c("business_id", "hours")
+write.csv(finally2, file = "business_hours")
+
+
+```
+
+```{r}
+head(finally)
+```
+
+
+```{r}
+complete <- yelp_business[complete.cases(yelp_business[,4]),]
+
+super <- as.data.frame(cbind(unlist(finally), complete$stars))
+plot(super[,1], super[,2])
+
+fit <- lm(super[,2]~super[,1], data = super)
+summary(fit)
+plot(fit)
+```
+
+```{r}
+test_business <- read_csv("~/Desktop/yelp_academic_dataset_business_test.csv", col_names = TRUE)
+```
+
+```{r}
+library(stringr)
+
+hours <- test_business$hours
+day_count <- str_count(hours, "day")
+
+combined <- cbind(test_business$business_id, hours, day_count)
+```
+
+```{r}
+hours2 <- gsub("\\[|\\]", "", hours)
+
+split <- strsplit(hours2, "[,]")
+
+get_time <- function(t){
+  split_1 <- gsub(".*day\\s(.*?)*", "", x = split[[t]] )
+
+  split_2 <- strsplit(split_1, "'")
+}
+
+split_3 <- sapply(1:length(split), get_time)
+
+get_business <- function(i){
+  matrix(unlist(split_3[[i]]), nrow = length(split_3[[i]]))
+}
+
+
+split_4 <- sapply(1:length(split_3), get_business)
+names(split_4) <- test_business$business_id
+
+wow <- lapply(split_4, function(x) x[!is.na(x)])
+wow2 <- wow[lapply(wow,length)>0]
+
+#split_5 <- matrix(wow2, ncol = length(wow2))
+split_5 <- wow[lapply(wow,length)>0]
+###
+get_days <- function(i){
+  length(split_5[[i]])
+}
+num_days <- sapply(1:length(split_5), get_days)
+
+###
+get_hours_one_business <- function(i){
+  clean <- strsplit(as.character(split_5[[i]]), "-")
+  
+  getpls <- function(k){
+    strsplit(as.character(clean[[k]]), ":")
+  }
+  
+  cleaned <- sapply(1:num_days[i], getpls)
+
+  mat <- matrix(as.numeric(unlist(cleaned)), ncol = 4, byrow = TRUE)
+  
+  mat2 <- cbind(abs(mat[,3] - mat[,1]), abs(mat[,4] - mat[,2])/60)
+  
+  mat3 <- mat2[,1] + mat2[,2]
+  mat4 <- sum(mat3)
+}
+
+finally <- as.data.frame(sapply(seq_along(split_5), get_hours_one_business))
+
+finally2 <- cbind(names(split_5), finally)
+#names(finally) <- names(split_5)
+
+colnames(finally2) <- c("business_id", "hours")
+write.csv(finally2, file = "test_business_hours.csv")
+
+
+```
+
+
+
+
+
