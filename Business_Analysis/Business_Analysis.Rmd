@@ -1,0 +1,421 @@
+---
+title: "Final Project-business part"
+author: "Tianyi Kong"
+date: "4/24/2017"
+output: pdf_document
+---
+```{r}
+library(ggplot2)
+library(ggmap)
+
+library(stringr)
+library(Matrix)
+library(Metrics)
+
+library(glmnet)
+library(xgboost)
+
+library(caret)
+library(plyr)
+library(randomForest)
+
+train = read.csv("yelp_academic_dataset_business_train.csv", stringsAsFactors = FALSE)
+colnames(train)
+test = read.csv("yelp_academic_dataset_business_test.csv", stringsAsFactors = FALSE)
+head(train)
+head(test)
+dim(train)
+```
+# Data processing
+## 1. Combined two datasets as one dataframe to reduce the procedure.
+```{r}
+# Determine if there is any col that can be removed:
+anyDuplicated(train[,1])
+# "X" is just the id for each business which has same nature as "business_id", thus can be removed.
+# "Unnamed:0" in test data seems to be the "X" in train data
+# Since this is the business data set, type = business for all rows, we remove that col too.
+# Assume "Name" is irrelevant towards the rating 
+# The test data has same cols with train data without the "stars", so we remove "stars" from train data. 
+combined = rbind(train[,-c(1,14,17)], test[, -c(1,2,17)])
+head(combined)
+dim(combined)
+
+```
+## 2. Find out if there exists any missing values
+```{r}
+typeof(combined[,1])
+# For unknown reason, the empty cells are not counted as NA, so we have to count "" as the missing value.
+colSums(combined == "")
+```
+
+## Clean up Neighborhood: "hood name"
+There are 1631 missing values in neighborhood. For some of them, we can replace them with the values of similar address, i.e. those with same postal code, or with same street name in same city and same state. 
+```{r}
+unique(combined$neighborhood)
+sort(table(combined$neighborhood))
+# Matching up the postal codes:
+
+# Get the postal codes for those business without neighborhood info.
+missed_p = combined$postal_code[combined[,1] == ""]
+missed_p = unique(missed_p)
+head(missed_p)
+
+# Fill in the values. Leave the neighborhood info for postal codes don't come with a neighborhood NA.
+a = c()
+for(i in 1:length(missed_p))
+  {if(sum(combined$neighborhood[combined$postal_code == missed_p[i]] != "") == 0)
+    combined$neighborhood[combined$postal_code == missed_p[i]] = "Unknown"
+  else 
+    a = combined$neighborhood[missed_p[i] == combined$postal_code]
+    name = a[a!=""]
+    combined$neighborhood[combined$postal_code == missed_p[i]] = name[1]
+}
+
+# Check the Results:
+head(combined$neighborhood, 10)
+
+# See how this reduced the empty values:
+s_missed_p = combined$postal_code[combined[,1] == "Unknown"]
+length(s_missed_p)
+
+# Therefore, we only have 66 unknown neighborhood left, which is comparably low.
+```
+
+# Parameter Selection
+## Location
+```{r, message = FALSE}
+# Data Visualization
+### Use ggmap here to plot the rating across the country:
+map = get_map(location='united states', zoom = 4, maptype = "roadmap",
+             source='google',color='color')
+ggmap(map) + geom_point(
+        aes(x = longitude, y = latitude, show_guide = TRUE, colour = stars), 
+        data = train, alpha=.5, na.rm = T)  + 
+        scale_color_gradient(low="red", high="blue")
+# The train data are centered around a few big cities. 
+
+sort(table(combined$city), decreasing = TRUE)
+# So, let's take a closer look at Las Vegas.
+lvd = subset(train, train$city == "Las Vegas")
+map = get_map(location='Las Vegas', zoom = 12, maptype = "roadmap",
+             source='google',color='color')
+ggmap(map) + geom_point(
+        aes(x = longitude, y = latitude, show_guide = TRUE, colour = stars), 
+        data = lvd, alpha=.5, na.rm = T)  + 
+        scale_color_gradient(low="yellow", high="blue")
+# Not really clear about the pattern.
+
+# Variables related to location: city, state, neighborhood, address, postal code, latitude, longtitude. It's clear that the latitude, longtitude could be highly correlated with city and state. 
+# Since address is alike the name of the business, the postal code and neighborhood could be acting better as representing the location. 
+
+# See if city can be included:
+train$city = as.factor(train$city)
+fit_city = lm(stars ~ city, data=train)
+summary(fit_city)
+# Yes, include city.
+```
+
+## Business Hours
+### Clean up missing values of business hour
+```{r}
+# We did a regression and predict the missing hours
+hours1 = read.csv("predicted_hours.csv")
+hours2 = read.csv("test_business_pred_hours.csv")
+
+head(hours1)
+head(hours2)
+colnames(hours1) = c("x1", "business_id", "hours")
+
+hours_p = rbind(hours1[,c(2,3)], hours2)
+
+# get total hours for those have business hour information
+hours_e1 = read.csv("business_hours.csv")
+hours_e2 = read.csv("test_business_hours.csv")
+hours_e = rbind(hours_e1[,c(2,3)], hours_e2[,c(2,3)])
+nrow(hours_e)==sum(combined$hours != "")
+
+hours_t = rbind(hours_e, hours_p)
+head(hours_t)
+
+# merge into original one
+combined = merge(combined,hours_t, by = "business_id")
+head(combined)
+```
+
+## Categories
+```{r}
+# clean up !!!
+cg = combined$categories
+head(cg)
+length(cg)
+c1 <- gsub("\\[|\\]", "", cg)
+c2 <- gsub("'", '', c1)
+c3 <- strsplit(c2, ",")
+c4 <- matrix(unlist(c3), ncol = 2, byrow = TRUE)
+head(c4)
+
+trim.leading <- function (x)  sub("^\\s+", "", x)
+c5 <- trim.leading(c4[,2])
+head(c5)
+final <- cbind(c4[,1], V2 = c5)
+head(final)
+final2 <- paste(final[,1],final[,2])
+final3 <- sub("\\s+Restaurants", "", final2)
+final4 <- sub("Restaurants\\s+", "", final3)
+final5 <- sub("\\s+Food", "", final4)
+final6 <- sub("Food\\s+", "", final5)
+combined$cate = final6
+
+```
+
+## Attributes
+```{r}
+# 1. The more attributes the better?
+# 2. What are the attributes that affect more on the rating--a small separate model?
+attr = read.csv("business_attributes_clean2.csv")
+attr = attr[,-1]
+head(attr)
+dim(attr)
+combined1 = merge(combined, attr, by = "business_id")
+sum(is.na(combined1$alcohol))
+head(combined1)
+
+```
+
+## is_open
+```{r}
+l1 = lm(stars ~ is_open, train)
+summary(l1)
+# So this parameter is not relevant to the stars.
+```
+
+In summary, the variables are going to be used in our model will be:
+City, hours, Categories, attributes, review counts
+```{r}
+head(combined)
+colnames(combined1)
+# numerical vars: hours.y, review_counts
+# categorical vars: city, cate, attr
+cn = combined1[,-c(2, 3, 4, 5, 6 ,7 , 10, 11 , 12,13,14)]
+cn = combined[,-c(2, 3, 4, 5, 6 ,7 , 10, 11 , 12,13,14)]
+head(cn)
+dmy <- dummyVars(" ~ .", data = cn[,-1])
+cnn <- data.frame(predict(dmy, newdata = cn[,-1]))
+write.csv(cn,"cn.csv")
+head(cnn)
+```
+
+# Building a Model
+```{r}
+colnames(combined)
+colnames(combined1)
+# numerical vars: hours.y, review_counts
+# categorical vars: city, cate, attr
+ttt = combined[c(1:nrow(train)),]
+ttt$stars = train$stars
+cn = combined1[,-c(2, 3, 4, 5, 6 ,7 , 10, 11 , 12,13,14)]
+cn1 = ttt[,-c(2, 3, 4, 5,6 ,7 , 10, 11 , 12,13,14)]
+
+
+tips = read.csv("yelp_academic_dataset_tip.csv",header=TRUE, sep=",", stringsAsFactors = FALSE)
+tips_count = tips %>%
+  dplyr::select(business_id, text)%>%
+  dplyr::group_by(business_id)%>%
+  dplyr::count(business_id)
+tips_count = as.data.frame(tips_count)
+colnames(tips_count)[2] = "count_tips"
+cn = dplyr::left_join(cn,tips_count, by="business_id")
+cn$count_tips[is.na(cn$count_tips)] = 0
+cn1 = dplyr::left_join(cn1,tips_count, by="business_id")
+cn1$count_tips[is.na(cn1$count_tips)] = 0
+
+check_ins = read.csv("Business_Checkins.csv",header=TRUE, sep=",", stringsAsFactors = FALSE)
+colnames(check_ins)[1] = "business_id"
+cn = dplyr::left_join(cn,check_ins, by="business_id")
+cn$total_checkins[is.na(cn$total_checkins)] = 0
+cn1 = dplyr::left_join(cn1,check_ins, by="business_id")
+cn1$total_checkins[is.na(cn1$total_checkins)] = 0
+
+dmy <- dummyVars(" ~ .", data = cn[,-1])
+cnn <- data.frame(predict(dmy, newdata = cn[,-1]))
+head(cnn)
+
+dmy1 <- dummyVars(" ~ .", data = cn1[,-1])
+cnn1 <- data.frame(predict(dmy1, newdata = cn1[,-1]))
+head(cnn1)
+```
+
+```{r}
+set.seed(200)
+index = sample(1:nrow(cnn),round(0.7*nrow(cnn)))
+cnn_test = cnn[-index,]
+
+cnn_train = cnn[index,]
+
+rf1_train = randomForest(stars ~ .,cnn_train[,-1], ntree=500)
+print(rf1_train)
+print(importance(rf1_train,type = 2))
+
+imp = importance(rf1_train,type = 2)
+#businessacceptscreditcards, review_count, hours.y
+
+rf_pred = predict(rf1_train, newdata=cnn_test)
+mean((as.numeric(rf_pred) - as.numeric(cnn_test$stars))^2) # scale review count 0.4162388 
+#not scale review count 0.3228972
+#not scale hours 0.3228313
+
+#tips count but no checkins : 0.4388695
+#checkins but no tips count : 0.4485386
+
+
+rf_business_attr = data.frame(business_id = cn$business_id[-index], prediction = rf_pred)
+business_id_train = data.frame(business_id = cn$business_id[index])
+
+write.csv(rf_business_attr, "prediction_business_attr.csv")
+write.csv(business_id_train, "business_id.csv")
+
+cnn_train_glm = as.matrix(cnn_train)
+cnn_test_glm = as.matrix(cnn_test)
+cv_fit_lasso = cv.glmnet(cnn_train_glm[,-16],cnn_train_glm[,16],alpha=1)
+coef(cv_fit_lasso,s=cv_fit_lasso$lambda.min)
+lasso_pred = predict(cv_fit_lasso, s= cv_fit_lasso$lambda.min, cnn_test_glm[,-16])
+mean((as.numeric(lasso_pred) - as.numeric(cnn_test$stars))^2) #0.3363616
+
+```
+
+
+```{r}
+colnames(ttt)
+# Data set 1[without state]
+tt1 = ttt[,c("business_id", "hours.y", "cate", "city", "review_count", "stars")]
+
+# Make dummies for categorical vars
+dmy <- dummyVars(" ~ .", data = tt1[,-1])
+tt11 <- data.frame(predict(dmy, newdata = tt1[,-1]))
+head(tt11)
+
+# Random forest
+set.seed(200)
+rf1 = randomForest(stars ~ ., data = tt11, importance =TRUE)
+varImpPlot(rf1)
+
+rf.cv <- rfcv(tt11[,-17], tt11[,17], cv.fold=10)
+with(rf.cv, plot(n.var, error.cv))
+print(rf.cv)
+print(rf1) #0.7798849
+# CART
+cart1 = rpart(stars ~., data = tt11, method = "anova")
+summary(cart1) #MSE=0.5741855 
+
+# rforest[Conditional inference trees are able to handle factors with more levels than Random Forests can]
+set.seed(200)
+index = sample(1:nrow(tt11),round(0.7*nrow(tt11)))
+
+tt11_test = tt11[-index,]
+tt11_train = tt11[index,]
+rf12 <- cforest(stars ~ .,
+                 data = tt11_train, 
+                 controls=cforest_unbiased(ntree=2000, mtry=5))
+
+rf12_pred = predict(rf12, newdata=tt11_test)
+mean((as.numeric(rf12_pred) - as.numeric(tt11_test$stars))^2) # 0.5200443
+
+
+```
+
+```{r}
+# Data set 2[with state]
+tt2 = ttt[,c("business_id", "hours.y", "cate", "city", "state","review_count", "stars")]
+# Make dummies for categorical vars
+dmy <- dummyVars(" ~ .", data = tt2[,-1])
+tt21 <- data.frame(predict(dmy, newdata = tt2[,-1]))
+head(tt21)
+
+# Split train/test sets
+index = sample(1:nrow(tt21),round(0.7*nrow(tt21)))
+
+tt2_test = tt21[-index,]
+tt2_train = tt21[index,]
+head(tt2_test)
+
+# Random forest
+set.seed(200)
+rf2 = randomForest(stars ~ ., data = tt2_train, importance =TRUE)
+varImpPlot(rf2)
+rf2_pred = predict(rf2, newdata = tt2_test[,-23]) 
+mean((as.numeric(rf2_pred) - as.numeric(tt2_test$stars))^2) #0.6232618
+
+# CART
+cart2 = rpart(stars ~., data = tt2_train, method = "anova")
+c2_pred = predict(cart2, newdata = tt2_test)
+mean((as.numeric(c2_pred) - as.numeric(tt2_test$stars))^2) #0.5787765
+
+# rforest[Conditional inference trees are able to handle factors with more levels than Random Forests can]
+set.seed(200)
+?cforest
+
+rf22 <- cforest(stars ~ .,
+                 data = tt2_train, 
+                 controls=cforest_unbiased(ntree=2000, mtry=5))
+
+rf22_pred = predict(rf22, newdata=tt2_test)
+mean((as.numeric(rf22_pred) - as.numeric(tt2_test$stars))^2) # 0.5860391
+
+# Don't include the state
+```
+# include the attributes
+```{r}
+head(combined1)
+dim(combined1)
+colnames(combined1)
+t3 = combined1[,-c(2:7,10:14)]
+# t3$stars = as.character(combined1$stars)
+
+
+# Make dummies for categorical vars
+dmy <- dummyVars(" ~ .", data = t3[,-1])
+tt3 <- data.frame(predict(dmy, newdata = t3[,-1]))
+head(tt3)
+sqrt(dim(tt3))
+tt3$stars = as.factor(combined1$stars)
+# Split train/test sets
+index = sample(1:nrow(tt3),round(0.7*nrow(tt3)))
+
+tt3_test = tt3[-index,]
+tt3_train = tt3[index,]
+```
+
+## fitting as multiclassification
+```{r}
+colnames(tt3)
+# Random forest
+set.seed(200)
+rf3 = randomForest(stars ~ ., data = tt3_train, importance =TRUE)
+varImpPlot(rf3, main = "Variable Importance Selected By Random Forest")
+
+rf3_pred = predict(rf3, newdata = tt3_test, type = "response") 
+# pred1 = round_any(rf3_pred, 0.5)
+# validating
+mean((rf3_pred - as.numeric(tt3_test$stars))^2) # 0.3530609
+
+table(tt3_test$stars, rf3_pred)
+prop.table(table(tt3_test$stars, rf3_pred),1)
+
+# CART
+cart3 = rpart(stars ~., data = ttt3_train, method = "anova")
+c3_pred = predict(cart3, newdata = ttt3_test)
+mean((as.numeric(c3_pred) - as.numeric(ttt3_test$stars))^2) # 0.4157549
+
+# rforest
+set.seed(200)
+rf33 <- cforest(stars ~ .,
+                 data = tt3_train, 
+                 controls=cforest_unbiased(ntree=500, mtry=5))
+
+rf33_pred = predict(rf33, newdata=tt3_test,type = "response")
+
+table(tt3_test$stars, rf33_pred)
+prop.table(table(tt3_test$stars, rf33_pred),1)
+
+# mean((as.numeric(rf33_pred) - as.numeric(ttt3_test$stars))^2) # 0.3789657
+```
